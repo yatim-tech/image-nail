@@ -16,7 +16,6 @@ import time
 import yaml
 
 
-# Add project root to python path to import modules
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 sys.path.append(project_root)
@@ -58,10 +57,62 @@ def load_lrs_config(model_type: str, is_style: bool) -> dict:
         return None
 
 
+def get_aitoolkit_config_template_path(model_type: str, train_data_dir: str) -> tuple[str, bool]:
+    """Get the appropriate AI-toolkit YAML template path based on model type and training type"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_dir = os.path.join(script_dir, "core", "config")
+    
+    model_type = model_type.lower()
+    
+    if model_type == ImageModelType.SDXL.value:
+        prompts_path = os.path.join(train_data_dir, "5_lora style")
+        if not os.path.exists(prompts_path):
+            template_path = os.path.join(config_dir, "base_diffusion_sdxl_person_aitoolkit.yaml")
+            return template_path, False
+        
+        prompts = []
+        for file in os.listdir(prompts_path):
+            if file.endswith(".txt"):
+                try:
+                    with open(os.path.join(prompts_path, file), "r") as f:
+                        prompt = f.read().strip()
+                        prompts.append(prompt)
+                except Exception as e:
+                    print(f"Warning: Could not read prompt file {file}: {e}", flush=True)
+        
+        try:
+            from trainer.utils.style_detection import detect_styles_in_prompts
+            styles = detect_styles_in_prompts(prompts)
+            print(f"Detected styles: {styles}", flush=True)
+            
+            if styles:
+                template_path = os.path.join(config_dir, "base_diffusion_sdxl_style_aitoolkit.yaml")
+                return template_path, True
+        except Exception as e:
+            print(f"Warning: Style detection failed: {e}", flush=True)
+        
+        template_path = os.path.join(config_dir, "base_diffusion_sdxl_person_aitoolkit.yaml")
+        return template_path, False
+    
+    elif model_type == ImageModelType.FLUX.value:
+        template_path = os.path.join(config_dir, "base_diffusion_flux_aitoolkit.yaml")
+        return template_path, False
+    
+    elif model_type == ImageModelType.Z_IMAGE.value:
+        template_path = os.path.join(config_dir, "base_diffusion_zimage.yaml")
+        return template_path, False
+    
+    elif model_type == ImageModelType.QWEN_IMAGE.value:
+        template_path = os.path.join(config_dir, "base_diffusion_qwen_image.yaml")
+        return template_path, False
+    
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+
 def get_network_config_for_sdxl(model_name: str, is_style: bool) -> dict:
     """Get network configuration based on SDXL model and training type"""
     
-    # Network configuration IDs for person training
     network_config_person = {
         "stabilityai/stable-diffusion-xl-base-1.0": 235,
         "Lykon/dreamshaper-xl-1-0": 235,
@@ -96,13 +147,8 @@ def get_network_config_for_sdxl(model_name: str, is_style: bool) -> dict:
         "OnomaAIResearch/Illustrious-xl-early-release-v0": 228
     }
 
-    # Network configuration for style training (all 235)
     network_config_style = {k: 235 for k in network_config_person.keys()}
-    
-    # Also add special case for TempestV0.1 in style
     network_config_style["dataautogpt3/TempestV0.1"] = 228
-
-    # Config mapping to actual network parameters
     config_mapping = {
         228: {
             "network_dim": 32,
@@ -137,9 +183,8 @@ def get_network_config_for_sdxl(model_name: str, is_style: bool) -> dict:
         },
     }
 
-    # Select the appropriate config
     network_config_dict = network_config_style if is_style else network_config_person
-    config_id = network_config_dict.get(model_name, 235)  # Default to 235
+    config_id = network_config_dict.get(model_name, 235)
     
     return config_mapping[config_id]
 
@@ -154,123 +199,76 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
     
-    # Determine if this is style or person training
-    _, is_style = train_paths.get_image_training_config_template_path(model_type, train_data_dir)
+    config_template_path, is_style = get_aitoolkit_config_template_path(model_type, train_data_dir)
+    print(f"Loading config template from: {config_template_path}", flush=True)
+    print(f"Training type: {'Style' if is_style else 'Person'}", flush=True)
     
-    # Base configuration structure
-    config = {
-        "job": "extension",
-        "config": {
-            "name": f"{model_type}_lora_{task_id}",
-            "process": [
-                {
-                    "type": "sd_trainer" if model_type == "sdxl" else "diffusion_trainer",
-                    "training_folder": output_dir,
-                    "device": "cuda:0",
-                    "network": {},
-                    "save": {
-                        "dtype": "bf16",
-                        "save_every": 250,
-                        "max_step_saves_to_keep": 4,
-                        "save_format": "safetensors"
-                    },
-                    "datasets": [
-                        {
-                            "folder_path": train_data_dir,
-                            "caption_ext": "txt",
-                            "cache_latents_to_disk": True,
-                            "resolution": [512, 768, 1024]
-                        }
-                    ],
-                    "train": {
-                        "gradient_checkpointing": True,
-                        "dtype": "bf16"
-                    },
-                    "model": {
-                        "name_or_path": model_path
-                    }
-                }
-            ]
-        },
-        "meta": {
-            "name": f"{model_type}_lora",
-            "version": "1.0"
-        }
-    }
+    try:
+        with open(config_template_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except Exception as e:
+        print(f"Error loading template: {e}", flush=True)
+        raise RuntimeError(f"Failed to load config template from {config_template_path}")
     
     process = config["config"]["process"][0]
+    process["training_folder"] = output_dir
+    process["datasets"][0]["folder_path"] = train_data_dir
+    process["model"]["name_or_path"] = model_path
     
-    # Add trigger word if provided
+    # config["config"]["name"] = "last"
+    
     if trigger_word:
         process["trigger_word"] = trigger_word
     
-    # Model-specific configurations
     if model_type == "sdxl":
-        # Get SDXL-specific network config
         network_config = get_network_config_for_sdxl(model_name, is_style)
+        print(f"Model: {model_name}", flush=True)
+        print(f"Network config: linear={network_config['network_dim']}, alpha={network_config['network_alpha']}, use_conv={network_config['use_conv']}", flush=True)
         
-        process["network"] = {
-            "type": "lora",
-            "linear": network_config["network_dim"],
-            "linear_alpha": network_config["network_alpha"]
-        }
+        process["network"]["linear"] = network_config["network_dim"]
+        process["network"]["linear_alpha"] = network_config["network_alpha"]
         
         if network_config["use_conv"]:
             process["network"]["conv"] = network_config["conv_dim"]
             process["network"]["conv_alpha"] = network_config["conv_alpha"]
+        else:
+            process["network"].pop("conv", None)
+            process["network"].pop("conv_alpha", None)
         
-        # SDXL training parameters
-        process["train"].update({
-            "batch_size": 4,
-            "steps": 1600,
-            "gradient_accumulation_steps": 1,
-            "train_unet": True,
-            "train_text_encoder": True,
-            "noise_scheduler": "ddpm",
-            "optimizer": "adamw8bit",
-            "lr": 0.0001,
-            "min_snr_gamma": 5.0 if not is_style else 8.0,
-        })
-        
-        # Load LRS config for learning rates
         lrs_config = load_lrs_config(model_type, is_style)
         if lrs_config:
             model_hash = hashlib.sha256(model_name.encode('utf-8')).hexdigest()
             default_config = lrs_config.get("default", {})
             model_config = lrs_config.get("data", {}).get(model_hash, {})
             
-            # Merge configs
             merged_lrs = {**default_config, **model_config}
             
-            if "unet_lr" in merged_lrs:
-                process["train"]["lr"] = merged_lrs["unet_lr"]
-            if "text_encoder_lr" in merged_lrs:
-                process["train"]["text_encoder_lr"] = merged_lrs["text_encoder_lr"]
-            if "max_train_steps" in merged_lrs:
-                process["train"]["steps"] = merged_lrs["max_train_steps"]
+            if model_config:
+                print(f"Applying LRS overrides for model hash: {model_hash[:16]}...", flush=True)
+                
+                if "unet_lr" in merged_lrs:
+                    process["train"]["lr"] = merged_lrs["unet_lr"]
+                    print(f"  - LR override: {merged_lrs['unet_lr']}", flush=True)
+                
+                if "text_encoder_lr" in merged_lrs:
+                    te_lr = merged_lrs["text_encoder_lr"]
+                    if isinstance(te_lr, list):
+                        te_lr = te_lr[0]
+                    process["train"]["text_encoder_lr"] = te_lr
+                    print(f"  - Text Encoder LR override: {te_lr}", flush=True)
+                
+                if "max_train_steps" in merged_lrs:
+                    if "max_train_epochs" in process["train"]:
+                        print(f"  - Note: Template uses epochs, keeping epoch-based training", flush=True)
+                    else:
+                        process["train"]["steps"] = merged_lrs["max_train_steps"]
+                        print(f"  - Steps override: {merged_lrs['max_train_steps']}", flush=True)
         
         process["model"]["is_xl"] = True
         
     elif model_type == "flux":
-        # Flux configuration
-        process["network"] = {
-            "type": "lora",
-            "linear": 128,
-            "linear_alpha": 128
-        }
+        print(f"Flux model: {model_name}", flush=True)
         
-        process["train"].update({
-            "batch_size": 1,
-            "steps": 2000,
-            "gradient_accumulation_steps": 1,
-            "train_unet": True,
-            "train_text_encoder": False,
-            "noise_scheduler": "flowmatch",
-            "optimizer": "adamw8bit",
-            "lr": 0.0001,
-        })
-        
-        # Load LRS config for Flux
         lrs_config = load_lrs_config(model_type, is_style)
         if lrs_config:
             model_hash = hashlib.sha256(model_name.encode('utf-8')).hexdigest()
@@ -279,49 +277,35 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
             
             merged_lrs = {**default_config, **model_config}
             
-            if "unet_lr" in merged_lrs:
-                process["train"]["lr"] = merged_lrs["unet_lr"]
-            if "text_encoder_lr" in merged_lrs:
-                process["train"]["text_encoder_lr"] = merged_lrs["text_encoder_lr"]
-            if "max_train_steps" in merged_lrs:
-                process["train"]["steps"] = merged_lrs["max_train_steps"]
+            if model_config:
+                print(f"Applying LRS overrides for Flux model", flush=True)
+                
+                if "unet_lr" in merged_lrs:
+                    process["train"]["lr"] = merged_lrs["unet_lr"]
+                    print(f"  - LR override: {merged_lrs['unet_lr']}", flush=True)
+                
+                if "text_encoder_lr" in merged_lrs:
+                    te_lr = merged_lrs["text_encoder_lr"]
+                    if isinstance(te_lr, list):
+                        te_lr = te_lr[0]
+                    process["train"]["text_encoder_lr"] = te_lr
+                    print(f"  - Text Encoder LR override: {te_lr}", flush=True)
+                
+                if "max_train_steps" in merged_lrs:
+                    if "max_train_epochs" in process["train"]:
+                        print(f"  - Note: Template uses epochs, keeping epoch-based training", flush=True)
+                    else:
+                        process["train"]["steps"] = merged_lrs["max_train_steps"]
+                        print(f"  - Steps override: {merged_lrs['max_train_steps']}", flush=True)
         
         process["model"]["is_flux"] = True
-        process["model"]["quantize"] = True
+        if "quantize" not in process["model"]:
+            process["model"]["quantize"] = True
         
     elif model_type in [ImageModelType.Z_IMAGE.value, ImageModelType.QWEN_IMAGE.value]:
-        # Z-Image / Qwen-Image configuration
-        process["network"] = {
-            "type": "lora",
-            "linear": 32,
-            "linear_alpha": 32,
-            "conv": 16,
-            "conv_alpha": 16
-        }
-        
-        process["train"].update({
-            "batch_size": 4,
-            "steps": 2000,
-            "lr": 0.0001,
-            "optimizer": "adamw8bit",
-            "noise_scheduler": "flowmatch",
-            "timestep_type": "weighted"
-        })
-        
-        # Model-specific settings
-        if model_type == ImageModelType.Z_IMAGE.value:
-            process["model"]["arch"] = "zimage:turbo"
-            process["model"]["quantize"] = True
-            process["model"]["qtype"] = "qfloat8"
-            process["model"]["quantize_te"] = True
-            process["model"]["qtype_te"] = "qfloat8"
-            process["model"]["assistant_lora_path"] = "/cache/hf_cache/zimage_turbo_training_adapter_v2.safetensors"
-        elif model_type == ImageModelType.QWEN_IMAGE.value:
-            process["model"]["arch"] = "qwen2vl"
-            process["model"]["quantize"] = True
-            process["model"]["qtype"] = "qfloat8"
+        print(f"Using template config for {model_type}", flush=True)
+        pass
     
-    # Save configuration
     config_path = os.path.join(train_cst.IMAGE_CONTAINER_CONFIG_SAVE_PATH, f"{task_id}.yaml")
     save_config(config, config_path)
     
@@ -370,7 +354,6 @@ def run_training(model_type: str, config_path: str):
 async def main():
     print("---STARTING UNIFIED AI-TOOLKIT IMAGE TRAINING SCRIPT---", flush=True)
     
-    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Unified Image Model Training Script (ai-toolkit)")
     parser.add_argument("--task-id", required=True, help="Task ID")
     parser.add_argument("--model", required=True, help="Model name or path")
@@ -389,7 +372,6 @@ async def main():
     
     model_path = train_paths.get_image_base_model_path(args.model)
 
-    # Prepare dataset
     print("Preparing dataset...", flush=True)
     training_images_repeat = (cst.DIFFUSION_SDXL_REPEATS 
                               if args.model_type == ImageModelType.SDXL.value 
@@ -404,7 +386,6 @@ async def main():
         output_dir=train_cst.IMAGE_CONTAINER_IMAGES_PATH
     )
 
-    # Create ai-toolkit config file
     config_path = create_aitoolkit_config(
         args.task_id,
         model_path,
@@ -414,7 +395,6 @@ async def main():
         args.trigger_word
     )
 
-    # Run training with ai-toolkit
     run_training(args.model_type, config_path)
 
 

@@ -11,50 +11,46 @@ config:
       type: lora
       linear: 32
       linear_alpha: 32
-      # For style training, use smaller values
-      # For person training with conv layers, use larger values
     
     save:
       dtype: bf16
-      save_every: 250  # Save every N steps
+      save_every_n_epochs: 5
       max_step_saves_to_keep: 4
       save_format: safetensors
     
     datasets:
     - folder_path: /dataset/images
       caption_ext: txt
-      caption_dropout_rate: 0.05
+      caption_dropout_rate: 0.0
       shuffle_tokens: false
       cache_latents_to_disk: true
       resolution: [512, 768, 1024]
-      # Multi-resolution buckets for SDXL
     
     train:
       batch_size: 4
-      steps: 1600
+      max_train_epochs: 25
       gradient_accumulation_steps: 1
       train_unet: true
       train_text_encoder: true
       gradient_checkpointing: true
-      noise_scheduler: flowmatch
-      optimizer: adamw8bit
-      lr: 0.0001
-      # Learning rates
-      unet_lr: 0.0001
-      text_encoder_lr: 0.00001
-      
-      # Loss settings
+      noise_scheduler: ddpm
+      optimizer: prodigy
+      optimizer_args:
+        decouple: true
+        d_coef: 1.0
+        weight_decay: 0.01
+        use_bias_correction: true
+        safeguard_warmup: true
+      lr: 1.0
+      text_encoder_lr: 1.0
+      lr_scheduler: constant
       loss_type: l2
       min_snr_gamma: 5.0
-      
-      # Noise offset
-      noise_offset: 0.0357
-      
-      # Other settings
+      max_grad_norm: 1.0
+      scale_weight_norms: 5.0
       ema_config:
         use_ema: true
         ema_decay: 0.99
-      
       dtype: bf16
       
     model:
@@ -62,8 +58,9 @@ config:
       is_v2: false
       is_v_pred: false
       is_xl: true
+      no_half_vae: true
 
 meta:
-  name: sdxl_lora
+  name: sdxl_person_lora
   version: '1.0'
 

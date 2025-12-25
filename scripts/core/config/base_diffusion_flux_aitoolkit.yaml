@@ -1,6 +1,6 @@
 job: extension
 config:
-  name: flux_lora_training
+  name: last
   process:
   - type: sd_trainer
     training_folder: /app/checkpoints
@@ -11,11 +11,10 @@ config:
       type: lora
       linear: 128
       linear_alpha: 128
-      # Flux specific network settings
     
     save:
       dtype: bf16
-      save_every: 250  # Save every N steps
+      save_every: 250
       max_step_saves_to_keep: 4
       save_format: safetensors
     
