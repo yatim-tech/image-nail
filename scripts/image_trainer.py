@@ -215,8 +215,6 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
     process["datasets"][0]["folder_path"] = train_data_dir
     process["model"]["name_or_path"] = model_path
     
-    # config["config"]["name"] = "last"
-    
     if trigger_word:
         process["trigger_word"] = trigger_word
     
@@ -315,7 +313,59 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
     return config_path
 
 
-def run_training(model_type: str, config_path: str):
+def flatten_aitoolkit_output(output_dir: str, config_name: str = "last"):
+    """
+    Flatten AI-toolkit output structure by moving files from nested subdirectory
+    
+    AI-toolkit creates: /output_dir/{config_name}/files
+    We need: /output_dir/files
+    
+    Args:
+        output_dir: Base output directory
+        config_name: Config name used in training (default: "last")
+    """
+    import shutil
+    
+    nested_dir = os.path.join(output_dir, config_name)
+    
+    if not os.path.exists(nested_dir):
+        print(f"No nested directory found: {nested_dir}", flush=True)
+        return
+    
+    print(f"\n{'='*80}", flush=True)
+    print("Flattening directory structure...", flush=True)
+    print(f"{'='*80}", flush=True)
+    print(f"Moving files from: {nested_dir}", flush=True)
+    print(f"To: {output_dir}", flush=True)
+    
+    moved_files = 0
+    
+    try:
+        for item in os.listdir(nested_dir):
+            src_path = os.path.join(nested_dir, item)
+            dest_path = os.path.join(output_dir, item)
+            
+            if os.path.exists(dest_path):
+                print(f"⚠️  Skipped (already exists): {item}", flush=True)
+                continue
+            
+            shutil.move(src_path, dest_path)
+            print(f"✅ Moved: {item}", flush=True)
+            moved_files += 1
+        
+        if not os.listdir(nested_dir):
+            os.rmdir(nested_dir)
+            print(f"✅ Removed empty directory: {config_name}/", flush=True)
+        
+        print(f"\nMoved {moved_files} files successfully.", flush=True)
+        print(f"{'='*80}\n", flush=True)
+        
+    except Exception as e:
+        print(f"❌ Error flattening directory: {e}", flush=True)
+        raise
+
+
+def run_training(model_type: str, config_path: str, output_dir: str = None):
     """Run training using ai-toolkit for all model types"""
     print(f"Starting ai-toolkit training with config: {config_path}", flush=True)
 
@@ -343,6 +393,14 @@ def run_training(model_type: str, config_path: str):
             raise subprocess.CalledProcessError(return_code, training_command)
 
         print("Training subprocess completed successfully.", flush=True)
+        
+        if output_dir and os.path.exists(output_dir) and model_type in ["sdxl", "flux"]:
+            try:
+                flatten_aitoolkit_output(output_dir, config_name="last")
+                print("Directory structure flattened successfully.", flush=True)
+            except Exception as e:
+                print(f"Warning: Could not flatten directory structure: {e}", flush=True)
+                print("Training completed, but files may be in nested directory.", flush=True)
 
     except subprocess.CalledProcessError as e:
         print("Training subprocess failed!", flush=True)
@@ -395,7 +453,13 @@ async def main():
         args.trigger_word
     )
 
-    run_training(args.model_type, config_path)
+    output_dir = train_paths.get_checkpoints_output_path(args.task_id, args.expected_repo_name)
+
+    run_training(
+        model_type=args.model_type,
+        config_path=config_path,
+        output_dir=output_dir
+    )
 
 
 if __name__ == "__main__":
