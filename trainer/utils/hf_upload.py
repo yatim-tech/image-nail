@@ -1,11 +1,11 @@
-import os
-import subprocess
-import re
 import glob
-import wandb
-import shutil
 import json
+import os
+import re
+import shutil
+import subprocess
 
+import wandb
 from huggingface_hub import HfApi
 from huggingface_hub import login
 
@@ -52,6 +52,28 @@ def patch_model_metadata(output_dir: str, base_model_id: str):
         pass
 
             
+def is_folder_empty_or_metadata_only(folder_path: str) -> bool:
+    """Check if folder is empty or only contains small metadata files like .gitattributes."""
+    if not os.path.isdir(folder_path):
+        return True
+    
+    items = os.listdir(folder_path)
+    if not items:
+        return True
+    
+    metadata_files = {'.git', '.gitattributes', '.gitignore', '.gitkeep'}
+    for item in items:
+        item_path = os.path.join(folder_path, item)
+        if os.path.isdir(item_path):
+            if item != '.git':
+                return False
+        elif item not in metadata_files:
+            if os.path.getsize(item_path) > 1024:
+                return False
+    
+    return True
+
+
 def sync_wandb_logs(cache_dir: str):
     sync_root = os.path.join(cache_dir, "wandb")
     run_dirs = glob.glob(os.path.join(sync_root, "offline-run-*"))
@@ -85,6 +107,27 @@ def sync_wandb_logs(cache_dir: str):
         except Exception as e:
             print(f"Failed to sync {run_dir}: {e}")
 
+
+def detect_subfolder(base_folder: str) -> str | None:
+    if not os.path.isdir(base_folder):
+        return None
+    for item in os.listdir(base_folder):
+        item_path = os.path.join(base_folder, item)
+        if not os.path.isdir(item_path):
+            continue
+        has_checkpoint_files = False
+        for file in os.listdir(item_path):
+            file_path = os.path.join(item_path, file)
+            if file.endswith('.safetensors'):
+                has_checkpoint_files = True
+                break
+        
+        if has_checkpoint_files:
+            return item_path
+    
+    return None
+
+
 def main():
     hf_token = os.getenv("HUGGINGFACE_TOKEN")
     hf_user = os.getenv("HUGGINGFACE_USERNAME")
@@ -108,6 +151,13 @@ def main():
 
     if not os.path.isdir(local_folder):
         raise FileNotFoundError(f"Local folder {local_folder} does not exist")
+
+    checkpoint_subfolder = detect_subfolder(local_folder)
+    if checkpoint_subfolder:
+        local_folder = checkpoint_subfolder
+    
+    if is_folder_empty_or_metadata_only(local_folder):
+        raise ValueError(f"Local folder {local_folder} is empty or only contains metadata files. Nothing to upload.")
 
     patch_model_metadata(local_folder, model)
 
@@ -135,6 +185,13 @@ def main():
             sync_wandb_logs(cache_dir=wandb_logs_path)
         except Exception as e:
             print(f"Failed to sync W&B logs: {e}", flush=True)
+
+    try:
+        if os.path.isdir(local_folder):
+            shutil.rmtree(local_folder)
+            print(f"Deleted local folder: {local_folder}", flush=True)
+    except Exception as e:
+        print(f"Failed to delete local folder {local_folder}: {e}", flush=True)
 
 
 if __name__ == "__main__":

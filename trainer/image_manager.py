@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import re
-import time
 import uuid
 
 import docker
@@ -14,16 +13,18 @@ import trainer.utils.training_paths as train_paths
 from core.models.payload_models import TrainerProxyRequest
 from core.models.payload_models import TrainRequestImage
 from core.models.payload_models import TrainRequestText
+from core.models.utility_models import ChatTemplateDatasetType
 from core.models.utility_models import DpoDatasetType
 from core.models.utility_models import FileFormat
 from core.models.utility_models import GrpoDatasetType
+from core.models.utility_models import ImageModelType
 from core.models.utility_models import InstructTextDatasetType
-from core.models.utility_models import ChatTemplateDatasetType
 from core.models.utility_models import TaskType
 from trainer import constants as cst
 from trainer.tasks import complete_task
 from trainer.tasks import log_task
 from trainer.tasks import update_wandb_url
+from trainer.utils.trainer_logging import logger
 from trainer.utils.misc import build_wandb_env
 from trainer.utils.misc import extract_container_error
 from trainer.utils.logging_two import get_all_context_tags
@@ -31,7 +32,8 @@ from trainer.utils.logging_two import get_logger
 from trainer.utils.logging_two import stream_container_logs
 from trainer.utils.logging_two import stream_image_build_logs
 
-logger = get_logger(__name__)
+
+# logger = get_logger(__name__)
 
 
 def calculate_container_resources(gpu_ids: list[int]) -> tuple[str, int]:
@@ -49,7 +51,12 @@ def calculate_container_resources(gpu_ids: list[int]) -> tuple[str, int]:
 
 
 def build_docker_image(
-    dockerfile_path: str, log_labels: dict[str, str] | None = None,  context_path: str = ".", is_image_task: bool = False, tag: str = None, no_cache: bool = True
+    dockerfile_path: str,
+    log_labels: dict[str, str] | None = None,
+    context_path: str = ".",
+    is_image_task: bool = False,
+    tag: str = None,
+    no_cache: bool = True,
 ) -> tuple[str, str | None]:
     client: docker.DockerClient = docker.from_env()
 
@@ -74,14 +81,6 @@ def build_docker_image(
         logger.error(f"Docker build failed: {str(e)}", extra=log_labels)
         return None, str(e)
 
-
-def build_with_retry(*args, **kwargs):
-    for attempt in range(cst.IMAGE_BUILD_RETRIES):
-        tag, error = build_docker_image(*args, **kwargs)
-        if tag:
-            return tag, None
-        logger.warning(f"Build attempt {attempt+1} failed: {error}")
-    return None, error
 
 def delete_image_and_cleanup(tag: str):
     client = docker.from_env()
@@ -110,6 +109,7 @@ async def run_trainer_container_image(
     expected_repo_name: str,
     hours_to_complete: float,
     hotkey: str,
+    trigger_word: str | None = None,
     log_labels: dict[str, str] | None = None,
     gpu_ids: list[int] = [0],
 ) -> Container:
@@ -127,8 +127,11 @@ async def run_trainer_container_image(
         "--expected-repo-name",
         expected_repo_name,
         "--hours-to-complete",
-        str(hours_to_complete),
+        str(hours_to_complete)
     ]
+
+    if trigger_word:
+        command += ["--trigger-word", trigger_word]
 
     container_name = f"image-trainer-{uuid.uuid4().hex}"
 
@@ -140,7 +143,7 @@ async def run_trainer_container_image(
 
     max_retries = cst.CONTAINER_START_MAX_RETRIES
     retry_delay = cst.CONTAINER_START_RETRY_DELAY_SECONDS
-    
+
     for attempt in range(max_retries):
         try:
             container: Container = client.containers.run(
@@ -166,10 +169,13 @@ async def run_trainer_container_image(
 
             log_streaming_task = asyncio.create_task(asyncio.to_thread(stream_container_logs, container, get_all_context_tags()))
             return container
-            
+
         except Exception as e:
             if attempt < max_retries - 1:
-                logger.warning(f"Error starting container (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s: {str(e)[:150]}", extra=log_labels)
+                logger.warning(
+                    f"Error starting container (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s: {str(e)[:150]}",
+                    extra=log_labels,
+                )
                 await asyncio.sleep(retry_delay)
             else:
                 logger.error(f"Failed to start image trainer container after {max_retries} attempts: {e}", extra=log_labels)
@@ -223,7 +229,7 @@ async def run_trainer_container_text(
 
     max_retries = cst.CONTAINER_START_MAX_RETRIES
     retry_delay = cst.CONTAINER_START_RETRY_DELAY_SECONDS
-    
+
     for attempt in range(max_retries):
         try:
             container: Container = client.containers.run(
@@ -249,10 +255,13 @@ async def run_trainer_container_text(
 
             log_streaming_task = asyncio.create_task(asyncio.to_thread(stream_container_logs, container, get_all_context_tags()))
             return container
-            
+
         except Exception as e:
             if attempt < max_retries - 1:
-                logger.warning(f"Error starting container (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s: {str(e)[:150]}", extra=log_labels)
+                logger.warning(
+                    f"Error starting container (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s: {str(e)[:150]}",
+                    extra=log_labels,
+                )
                 await asyncio.sleep(retry_delay)
             else:
                 logger.error(f"Failed to start text trainer container after {max_retries} attempts: {e}", extra=log_labels)
@@ -277,6 +286,7 @@ def run_downloader_container(
     task_type: TaskType,
     hotkey: str,
     file_format: FileFormat | None = None,
+    model_type: ImageModelType | None = None,
     log_labels: dict[str, str] | None = None,
 ) -> tuple[int, Exception | None]:
     client = docker.from_env()
@@ -293,6 +303,9 @@ def run_downloader_container(
     ]
     if file_format:
         command += ["--file-format", file_format]
+
+    if model_type:
+        command += ["--model-type", model_type]
 
     container_name = f"downloader-{task_id}-{str(uuid.uuid4())[:8]}"
     container = None
@@ -386,9 +399,7 @@ async def upload_repo_to_hf(
             name=container_name,
         )
 
-        log_streaming_task = asyncio.create_task(
-            asyncio.to_thread(stream_container_logs, container, get_all_context_tags())
-        )
+        log_streaming_task = asyncio.create_task(asyncio.to_thread(stream_container_logs, container, get_all_context_tags()))
 
         result = container.wait()
         logs = container.logs().decode("utf-8", errors="ignore")
@@ -402,8 +413,7 @@ async def upload_repo_to_hf(
 
         if exit_code != 0:
             last_err = extract_container_error(logs) or "unknown error"
-            msg = (f"HF upload failed | exit_code={exit_code} | container={container_name} | "
-                   f"last_error={last_err}")
+            msg = f"HF upload failed | exit_code={exit_code} | container={container_name} | last_error={last_err}"
             await log_task(task_id, hotkey, f"[ERROR] {msg}")
             raise RuntimeError(msg)
 
@@ -419,10 +429,7 @@ async def upload_repo_to_hf(
                     container.kill()
                 container.remove(force=True)
             except Exception as cleanup_err:
-                logger.warning(
-                    f"Failed to remove upload container {container.name}: {cleanup_err}"
-                )
-
+                logger.warning(f"Failed to remove upload container {container.name}: {cleanup_err}")
 
 
 def get_task_type(request: TrainerProxyRequest) -> TaskType:
@@ -446,7 +453,23 @@ def get_task_type(request: TrainerProxyRequest) -> TaskType:
     raise ValueError(f"Unsupported training_data type: {type(training_data)}")
 
 
+def get_dockerfile_path(task_type: TaskType, training_data, local_repo_path: str) -> str:
+    """Get the appropriate dockerfile path based on task type and model type"""
+    if task_type == TaskType.IMAGETASK:
+        model_type = training_data.model_type
+        if model_type in [ImageModelType.Z_IMAGE, ImageModelType.QWEN_IMAGE]:
+            return f"{local_repo_path}/{cst.DEFAULT_IMAGE_TOOLKIT_DOCKERFILE_PATH}"
+        else:
+            return f"{local_repo_path}/{cst.DEFAULT_IMAGE_DOCKERFILE_PATH}"
+ 
+    else:
+        return f"{local_repo_path}/{cst.DEFAULT_TEXT_DOCKERFILE_PATH}"
+
+
 async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
+    cancelled_exc: asyncio.CancelledError | None = None
+    cancel_log_message: str | None = None
+
     try:
         training_data = task.training_data
         success = False
@@ -470,11 +493,7 @@ async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
             ),
         }
 
-        dockerfile_path = (
-            f"{local_repo_path}/{cst.DEFAULT_IMAGE_DOCKERFILE_PATH}"
-            if task_type == TaskType.IMAGETASK
-            else f"{local_repo_path}/{cst.DEFAULT_TEXT_DOCKERFILE_PATH}"
-        )
+        dockerfile_path = get_dockerfile_path(task_type, training_data, local_repo_path)
 
         logger.info("Running Cache Download Container", extra=log_labels)
         await log_task(training_data.task_id, task.hotkey, "Downloading data")
@@ -487,6 +506,7 @@ async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
             task_type=task_type,
             hotkey=task.hotkey,
             file_format=getattr(training_data, "file_format", None),
+            model_type=training_data.model_type if task_type == TaskType.IMAGETASK else None,
             log_labels=log_labels,
         )
 
@@ -527,6 +547,7 @@ async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
                     expected_repo_name=training_data.expected_repo_name,
                     hours_to_complete=training_data.hours_to_complete,
                     hotkey=task.hotkey,
+                    trigger_word=training_data.trigger_word if training_data.trigger_word else None,
                     log_labels=log_labels,
                     gpu_ids=task.gpu_ids,
                 ),
@@ -578,6 +599,10 @@ async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
             success = True
             await complete_task(training_data.task_id, task.hotkey, success=success)
 
+    except asyncio.CancelledError as cancel:
+        cancel_log_message = "[INFO] Training cancelled."
+        logger.info("Training cancelled", extra=log_labels)
+        cancelled_exc = cancel
     except Exception as e:
         log_message = f"[ERROR] Job failed: {e}"
         await log_task(training_data.task_id, task.hotkey, log_message)
@@ -585,44 +610,56 @@ async def start_training_task(task: TrainerProxyRequest, local_repo_path: str):
         await complete_task(training_data.task_id, task.hotkey, success=success)
 
     finally:
-        if container and isinstance(container, Container):
-            try:
-                container.reload()
-                if container.status == "running":
-                    container.kill()
-                container.remove(force=True)
-                await log_task(training_data.task_id, task.hotkey, f"Container {container.name} cleaned up.")
+        async def _final_cleanup():
+            nonlocal success
 
-            except Exception as cleanup_err:
-                await log_task(training_data.task_id, task.hotkey, f"Error during container cleanup: {cleanup_err}")
+            if cancel_log_message:
+                await log_task(training_data.task_id, task.hotkey, cancel_log_message)
 
-        logger.info("Cleaning up", extra=log_labels)
-        if tag:
-            delete_image_and_cleanup(tag)
-            logger.info("Cleaned up Docker resources.", extra=log_labels)
-        else:
-            logger.info("No Docker image to clean up.", extra=log_labels)
+            if container and isinstance(container, Container):
+                try:
+                    container.reload()
+                    if container.status == "running":
+                        container.kill()
+                    container.remove(force=True)
+                    await log_task(training_data.task_id, task.hotkey, f"Container {container.name} cleaned up.")
 
-        if success:
-            try:
-                path_in_repo = cst.IMAGE_TASKS_HF_SUBFOLDER_PATH if task_type == TaskType.IMAGETASK else None
-                wandb_token = os.getenv("WANDB_TOKEN") if task_type != TaskType.IMAGETASK else None
-                await upload_repo_to_hf(
-                    task_id=training_data.task_id,
-                    hotkey=task.hotkey,
-                    expected_repo_name=training_data.expected_repo_name,
-                    huggingface_username=os.getenv("HUGGINGFACE_USERNAME"),
-                    huggingface_token=os.getenv("HUGGINGFACE_TOKEN"),
-                    model=training_data.model,
-                    docker_labels=log_labels,
-                    wandb_token=wandb_token,
-                    path_in_repo=path_in_repo,
-                )
+                except Exception as cleanup_err:
+                    await log_task(training_data.task_id, task.hotkey, f"Error during container cleanup: {cleanup_err}")
 
-                await log_task(training_data.task_id, task.hotkey, "Repo uploaded successfully.")
-            except Exception as upload_err:
-                log_message = f"[ERROR] Upload container failed | ExitCode: Unknown | LastError: {upload_err}"
-                await log_task(training_data.task_id, task.hotkey, log_message)
-                success = False
+            logger.info("Cleaning up", extra=log_labels)
+            if tag:
+                delete_image_and_cleanup(tag)
+                logger.info("Cleaned up Docker resources.", extra=log_labels)
+            else:
+                logger.info("No Docker image to clean up.", extra=log_labels)
 
-        await complete_task(training_data.task_id, task.hotkey, success=success)
+            if success:
+                try:
+                    path_in_repo = cst.IMAGE_TASKS_HF_SUBFOLDER_PATH if task_type == TaskType.IMAGETASK else None
+                    wandb_token = os.getenv("WANDB_TOKEN") if task_type != TaskType.IMAGETASK else None
+                    await upload_repo_to_hf(
+                        task_id=training_data.task_id,
+                        hotkey=task.hotkey,
+                        expected_repo_name=training_data.expected_repo_name,
+                        huggingface_username=os.getenv("HUGGINGFACE_USERNAME"),
+                        huggingface_token=os.getenv("HUGGINGFACE_TOKEN"),
+                        model=training_data.model,
+                        docker_labels=log_labels,
+                        wandb_token=wandb_token,
+                        path_in_repo=path_in_repo,
+                    )
+
+                    await log_task(training_data.task_id, task.hotkey, "Repo uploaded successfully.")
+                except Exception as upload_err:
+                    log_message = f"[ERROR] Upload container failed | ExitCode: Unknown | LastError: {upload_err}"
+                    await log_task(training_data.task_id, task.hotkey, log_message)
+                    success = False
+
+            await complete_task(training_data.task_id, task.hotkey, success=success)
+
+        try:
+            await asyncio.shield(_final_cleanup())
+        finally:
+            if cancelled_exc:
+                raise cancelled_exc
