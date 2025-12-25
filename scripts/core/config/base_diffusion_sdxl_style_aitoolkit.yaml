@@ -9,8 +9,8 @@ config:
     
     network:
       type: lora
-      linear: 32
-      linear_alpha: 32
+      linear: 8
+      linear_alpha: 4
     
     save:
       dtype: bf16
@@ -33,7 +33,8 @@ config:
       train_unet: true
       train_text_encoder: true
       gradient_checkpointing: true
-      noise_scheduler: ddpm
+      max_denoising_steps: 40
+      noise_scheduler: euler_a
       optimizer: adamw
       optimizer_args:
         betas: [0.9, 0.999]
