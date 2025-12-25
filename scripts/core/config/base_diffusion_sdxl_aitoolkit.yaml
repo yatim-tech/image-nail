@@ -1,0 +1,69 @@
+job: extension
+config:
+  name: sdxl_lora_training
+  process:
+  - type: sd_trainer
+    training_folder: /app/checkpoints
+    device: cuda:0
+    trigger_word: ""
+    
+    network:
+      type: lora
+      linear: 32
+      linear_alpha: 32
+      # For style training, use smaller values
+      # For person training with conv layers, use larger values
+    
+    save:
+      dtype: bf16
+      save_every: 250  # Save every N steps
+      max_step_saves_to_keep: 4
+      save_format: safetensors
+    
+    datasets:
+    - folder_path: /dataset/images
+      caption_ext: txt
+      caption_dropout_rate: 0.05
+      shuffle_tokens: false
+      cache_latents_to_disk: true
+      resolution: [512, 768, 1024]
+      # Multi-resolution buckets for SDXL
+    
+    train:
+      batch_size: 4
+      steps: 1600
+      gradient_accumulation_steps: 1
+      train_unet: true
+      train_text_encoder: true
+      gradient_checkpointing: true
+      noise_scheduler: flowmatch
+      optimizer: adamw8bit
+      lr: 0.0001
+      # Learning rates
+      unet_lr: 0.0001
+      text_encoder_lr: 0.00001
+      
+      # Loss settings
+      loss_type: l2
+      min_snr_gamma: 5.0
+      
+      # Noise offset
+      noise_offset: 0.0357
+      
+      # Other settings
+      ema_config:
+        use_ema: true
+        ema_decay: 0.99
+      
+      dtype: bf16
+      
+    model:
+      name_or_path: /cache/models/sdxl_base
+      is_v2: false
+      is_v_pred: false
+      is_xl: true
+
+meta:
+  name: sdxl_lora
+  version: '1.0'
+

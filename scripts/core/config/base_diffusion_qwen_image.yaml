@@ -32,6 +32,9 @@ config:
       cache_text_embeddings: true
       train_unet: true
       train_text_encoder: false
+      ema_config:
+        use_ema: true
+        ema_decay: 0.99
     model:
       name_or_path: /cache/models
       arch: qwen_image
