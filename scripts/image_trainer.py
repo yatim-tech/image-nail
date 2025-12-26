@@ -261,7 +261,25 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
                     else:
                         process["train"]["steps"] = merged_lrs["max_train_steps"]
                         print(f"  - Steps override: {merged_lrs['max_train_steps']}", flush=True)
-        
+
+                if "min_snr_gamma" in merged_lrs:
+                    process["train"]["min_snr_gamma"] = merged_lrs["min_snr_gamma"]
+
+                if "train_batch_size" in merged_lrs:
+                    process["train"]["batch_size"] = merged_lrs["train_batch_size"]
+
+                if "max_grad_norm" in merged_lrs:
+                    process["train"]["max_grad_norm"] = merged_lrs["max_grad_norm"]
+
+                if "max_train_epochs" in merged_lrs:
+                    process["train"]["max_train_epochs"] = merged_lrs["max_train_epochs"]
+
+                if "noise_offset" in merged_lrs:
+                    process["train"]["noise_offset"] = merged_lrs["noise_offset"]
+
+                if "lr_warmup_steps" in merged_lrs:
+                    process["train"]["lr_warmup_steps"] = merged_lrs["lr_warmup_steps"]
+
         process["model"]["is_xl"] = True
         
     elif model_type == "flux":
