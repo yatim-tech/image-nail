@@ -279,6 +279,46 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
 
                 if "lr_warmup_steps" in merged_lrs:
                     process["train"]["lr_warmup_steps"] = merged_lrs["lr_warmup_steps"]
+                
+                if "prior_loss_weight" in merged_lrs:
+                    process["train"]["prior_loss_weight"] = merged_lrs["prior_loss_weight"]
+                    print(f"  - Prior Loss Weight override: {merged_lrs['prior_loss_weight']}", flush=True)
+                
+                if "seed" in merged_lrs:
+                    process["train"]["seed"] = merged_lrs["seed"]
+                    print(f"  - Seed override: {merged_lrs['seed']}", flush=True)
+                
+                if "optimizer_args" in merged_lrs:
+                    optimizer_args_dict = {}
+                    for arg in merged_lrs["optimizer_args"]:
+                        if "=" in arg:
+                            key, value = arg.split("=", 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            if value.lower() == "true":
+                                optimizer_args_dict[key] = True
+                            elif value.lower() == "false":
+                                optimizer_args_dict[key] = False
+                            elif value.startswith("(") and value.endswith(")"):
+                                import ast
+                                try:
+                                    optimizer_args_dict[key] = ast.literal_eval(value)
+                                except:
+                                    optimizer_args_dict[key] = value
+                            else:
+                                try:
+                                    if "e" in value.lower() or "." in value:
+                                        optimizer_args_dict[key] = float(value)
+                                    else:
+                                        optimizer_args_dict[key] = int(value)
+                                except ValueError:
+                                    optimizer_args_dict[key] = value
+                    
+                    if "optimizer_args" not in process["train"]:
+                        process["train"]["optimizer_args"] = {}
+                    process["train"]["optimizer_args"].update(optimizer_args_dict)
+                    print(f"  - Optimizer Args override: {optimizer_args_dict}", flush=True)
 
         process["model"]["is_xl"] = True
         
@@ -313,6 +353,74 @@ def create_aitoolkit_config(task_id: str, model_path: str, model_name: str, mode
                     else:
                         process["train"]["steps"] = merged_lrs["max_train_steps"]
                         print(f"  - Steps override: {merged_lrs['max_train_steps']}", flush=True)
+                
+                if "min_snr_gamma" in merged_lrs:
+                    process["train"]["min_snr_gamma"] = merged_lrs["min_snr_gamma"]
+                    print(f"  - Min SNR Gamma override: {merged_lrs['min_snr_gamma']}", flush=True)
+
+                if "train_batch_size" in merged_lrs:
+                    process["train"]["batch_size"] = merged_lrs["train_batch_size"]
+                    print(f"  - Batch Size override: {merged_lrs['train_batch_size']}", flush=True)
+
+                if "max_grad_norm" in merged_lrs:
+                    process["train"]["max_grad_norm"] = merged_lrs["max_grad_norm"]
+                    print(f"  - Max Grad Norm override: {merged_lrs['max_grad_norm']}", flush=True)
+
+                if "max_train_epochs" in merged_lrs:
+                    process["train"]["max_train_epochs"] = merged_lrs["max_train_epochs"]
+                    print(f"  - Max Train Epochs override: {merged_lrs['max_train_epochs']}", flush=True)
+
+                if "noise_offset" in merged_lrs:
+                    process["train"]["noise_offset"] = merged_lrs["noise_offset"]
+                    print(f"  - Noise Offset override: {merged_lrs['noise_offset']}", flush=True)
+
+                if "lr_warmup_steps" in merged_lrs:
+                    process["train"]["lr_warmup_steps"] = merged_lrs["lr_warmup_steps"]
+                    print(f"  - LR Warmup Steps override: {merged_lrs['lr_warmup_steps']}", flush=True)
+                
+                if "prior_loss_weight" in merged_lrs:
+                    process["train"]["prior_loss_weight"] = merged_lrs["prior_loss_weight"]
+                    print(f"  - Prior Loss Weight override: {merged_lrs['prior_loss_weight']}", flush=True)
+                
+                if "seed" in merged_lrs:
+                    process["train"]["seed"] = merged_lrs["seed"]
+                    print(f"  - Seed override: {merged_lrs['seed']}", flush=True)
+                
+                if "optimizer_args" in merged_lrs:
+                    # Parse optimizer_args from array format to dict
+                    optimizer_args_dict = {}
+                    for arg in merged_lrs["optimizer_args"]:
+                        if "=" in arg:
+                            key, value = arg.split("=", 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            # Parse value types
+                            if value.lower() == "true":
+                                optimizer_args_dict[key] = True
+                            elif value.lower() == "false":
+                                optimizer_args_dict[key] = False
+                            elif value.startswith("(") and value.endswith(")"):
+                                # Parse tuple like (0.9, 0.999)
+                                import ast
+                                try:
+                                    optimizer_args_dict[key] = ast.literal_eval(value)
+                                except:
+                                    optimizer_args_dict[key] = value
+                            else:
+                                try:
+                                    # Try parse as number
+                                    if "e" in value.lower() or "." in value:
+                                        optimizer_args_dict[key] = float(value)
+                                    else:
+                                        optimizer_args_dict[key] = int(value)
+                                except ValueError:
+                                    optimizer_args_dict[key] = value
+                    
+                    if "optimizer_args" not in process["train"]:
+                        process["train"]["optimizer_args"] = {}
+                    process["train"]["optimizer_args"].update(optimizer_args_dict)
+                    print(f"  - Optimizer Args override: {optimizer_args_dict}", flush=True)
         
         process["model"]["is_flux"] = True
         if "quantize" not in process["model"]:
