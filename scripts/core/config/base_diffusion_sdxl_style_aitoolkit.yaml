@@ -40,8 +40,8 @@ config:
         betas: [0.9, 0.999]
         weight_decay: 0.0001
         eps: 1e-08
-      lr: 0.00002
-      text_encoder_lr: 0.000002
+      lr: 0.0000411
+      text_encoder_lr: 0.0000411
       lr_scheduler: cosine
       lr_warmup_steps: 25
       lr_scheduler_args:
@@ -49,7 +49,7 @@ config:
         power: 1.0
       loss_type: l2
       min_snr_gamma: 8.0
-      noise_offset: 0.0357
+      noise_offset: 0.0411
       max_grad_norm: 1.0
       scale_weight_norms: 5.0
       ema_config:

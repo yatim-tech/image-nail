@@ -47,7 +47,8 @@ config:
       text_encoder_lr: 1.0
       lr_scheduler: constant
       loss_type: l2
-      min_snr_gamma: 5.0
+      min_snr_gamma: 7.0
+      prior_loss_weight: 0.8
       max_grad_norm: 1.0
       scale_weight_norms: 5.0
       ema_config:
