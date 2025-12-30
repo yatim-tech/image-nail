@@ -13,7 +13,7 @@ config:
       conv_alpha: 16
     save:
       dtype: bf16
-      save_every: 250
+      save_every: 500
       max_step_saves_to_keep: 4
       save_format: diffusers
     datasets:
@@ -25,7 +25,7 @@ config:
       is_reg: false
     train:
       batch_size: 4
-      steps: 2000
+      steps: 2500
       gradient_accumulation_steps: 1
       lr: 0.0001
       optimizer: adamw8bit
